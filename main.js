@@ -1,6 +1,7 @@
 import './style.css'
-import AgoraRTC from 'agora-rtc-sdk-ng'
+import AgoraRTC from "agora-rtc-sdk-ng"
 import appid from './\bappId'
+
 
 const token = null
 const rtcUid =  Math.floor(Math.random() * 2032)
@@ -12,31 +13,98 @@ let audioTracks = {
   remoteAudioTracks: {},
 };
 
+let micMuted = true
+
 let rtcClient;
 
-// 1. RTC client 초기화 , Channel 참가 -> createClient, Join
-// 2. MIC Audio Track Getting -> createMicrophoneAudioTrack
-// 3. 유저참가, 비공개, 떠나기 function
 
 const initRtc = async () => {
-    rtcClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    rtcClient.on('user-joined', handleUserJoined)
-    
-    await rtcClient.join(appid, roomId, token, rtcUid)
-  
-    audioTracks.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-    await rtcClient.publish(audioTracks.localAudioTrack);
-  
-    document.getElementById('members').insertAdjacentHTML('beforeend', `<div class="speaker user-rtc-${rtcUid}" id="${rtcUid}"><p>${rtcUid}</p></div>`)
+  rtcClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
-    rtcClient.on('user-joined', handleUserJoined)
-    rtcClient.on("user-published", handleUserPublished)
-    rtcClient.on("user-left", handleUserLeft);
+
+  rtcClient.on('user-joined', handleUserJoined)
+  rtcClient.on("user-published", handleUserPublished)
+  rtcClient.on("user-left", handleUserLeft);
+  
+
+  await rtcClient.join(appid, roomId, token, rtcUid)
+  audioTracks.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+  audioTracks.localAudioTrack.setMuted(micMuted)
+  await rtcClient.publish(audioTracks.localAudioTrack);
+
+
+  document.getElementById('members').insertAdjacentHTML('beforeend', `<div class="speaker user-rtc-${rtcUid}" id="${rtcUid}"><p>${rtcUid}</p></div>`)
+
+  initVolumeIndicator()
+}
+
+let initVolumeIndicator = async () => {
+
+  //1
+  AgoraRTC.setParameter('AUDIO_VOLUME_INDICATION_INTERVAL', 200);
+  rtcClient.enableAudioVolumeIndicator();
+  
+  //2
+  rtcClient.on("volume-indicator", volumes => {
+    console.log('volumes:', volumes);
+    volumes.forEach((volume) => {
+      console.log(`UID ${volume.uid} Level ${volume.level}`);
+      console.log('VOLUME:', volumes);
+
+      //3
+      try{
+          let item = document.getElementsByClassName(`user-rtc-${volume.uid}`)[0]
+
+         if (volume.level >= 50){
+           item.style.borderColor = '#00ff00'
+         }else{
+           item.style.borderColor = "#fff"
+         }
+      }catch(error){
+        console.error(error)
+      }
+
+
+    });
+  })
+}
+
+
+let handleUserJoined = async (user) => {
+  console.log('USER:', user)
+  document.getElementById('members').insertAdjacentHTML('beforeend', `<div class="speaker user-rtc-${user.uid}" id="${user.uid}"><p>${user.uid}</p></div>`)
+} 
+
+let handleUserPublished = async (user, mediaType) => {
+  await  rtcClient.subscribe(user, mediaType);
+
+  if (mediaType == "audio"){
+    audioTracks.remoteAudioTracks[user.uid] = [user.audioTrack]
+    user.audioTrack.play();
   }
+}
 
-  let lobbyForm = document.getElementById('form')
+let handleUserLeft = async (user) => {
+  delete audioTracks.remoteAudioTracks[user.uid]
+  document.getElementById(user.uid).remove()
+}
 
-  // Enter Room
+const toggleMic = async (e) => {
+  if (micMuted){
+    e.target.src = 'icons/mic.svg'
+    e.target.style.backgroundColor = 'ivory'
+    micMuted = false
+  }else{
+    e.target.src = 'icons/mic-off.svg'
+    e.target.style.backgroundColor = 'indianred'
+    
+    micMuted = true
+  }
+  audioTracks.localAudioTrack.setMuted(micMuted)
+}
+
+
+let lobbyForm = document.getElementById('form')
 
 const enterRoom = async (e) => {
   e.preventDefault()
@@ -46,50 +114,17 @@ const enterRoom = async (e) => {
   document.getElementById('room-header').style.display = "flex"
 }
 
-lobbyForm.addEventListener('submit', enterRoom)
-
-// Leave Room
-// 1. Track 끄기, 멈추기 -> Stop, Close
-// 2. Track 비공개, 채널 떠나기 -> unpublish, leave
-
 let leaveRoom = async () => {
-    //1
-    audioTracks.localAudioTrack.stop()
-    audioTracks.localAudioTrack.close()
-  
-    //2
-    rtcClient.unpublish()
-    rtcClient.leave()
-  
-    //3
-    document.getElementById('form').style.display = 'block'
-    document.getElementById('room-header').style.display = 'none'
-    document.getElementById('members').innerHTML = ''
-  }
-  
-  document.getElementById('leave-icon').addEventListener('click', leaveRoom)
+  audioTracks.localAudioTrack.stop()
+  audioTracks.localAudioTrack.close()
+  rtcClient.unpublish()
+  rtcClient.leave()
 
-  //1. 새로운 유저 가입시 시작
-  // console.log("USER:", user)개체를 확인
-  let handleUserJoined = async (user) => {
-    //2. 새로운 HTML 요소를 생성하고 DOM에 추가하면 합류한 사용자를 시각적으로 표현
-    document.getElementById('members').insertAdjacentHTML('beforeend', `<div class="speaker user-rtc-${user.uid}" id="${user.uid}"><p>${user.uid}</p></div>`)
-  } 
-  
-  //3. handleUserPublished원격 사용자가 오디오 및/또는 비디오 트랙을 게시하면 실행
-  let handleUserPublished = async (user, mediaType) => {
-    //4. 유저 미디어 구독 메서드
-    await  rtcClient.subscribe(user, mediaType);
-    
-    //5
-    if (mediaType == "audio"){
-      audioTracks.remoteAudioTracks[user.uid] = [user.audioTrack]
-      user.audioTrack.play();
-    }
-  }
-  
-  //6. HTML 요소에 전달한 특정 사용자 ID로 DOM에서 사용자로 특정
-  let handleUserLeft = async (user) => {
-    delete audioTracks.remoteAudioTracks[user.uid]
-    document.getElementById(user.uid).remove()
-  }
+  document.getElementById('form').style.display = 'block'
+  document.getElementById('room-header').style.display = 'none'
+  document.getElementById('members').innerHTML = ''
+}
+
+lobbyForm.addEventListener('submit', enterRoom)
+document.getElementById('leave-icon').addEventListener('click', leaveRoom)
+document.getElementById('mic-icon').addEventListener('click', toggleMic)
